@@ -70,8 +70,12 @@ const searchUser = async (req, res, next) => {
         const query = req.query.query
         let page = req.query.page
         const limit = req.query.limit || 10
-        const docs = await UserModel.find({ name: { $regex: `^${query}`, $options: 'i' } }).exec()
-        const total_results = await UserModel.countDocuments()
+
+        const skip = (page - 1) * limit
+        const docs = await UserModel.find({ name: { $regex: `^${query}`, $options: 'i' } })
+            .skip(skip)
+            .limit(limit)
+        const total_results = await UserModel.countDocuments({ name: { $regex: `^${query}`, $options: 'i' } })
 
         if (!query) return
 
@@ -80,22 +84,17 @@ const searchUser = async (req, res, next) => {
             if (page < 1) {
                 page = 1
             }
-
-            const skip = (page - 1) * limit
-
-            const docs = await UserModel.find({}).skip(skip).limit(limit)
-
-            return res.json({
-                page,
-                result: docs,
-                total_pages: Math.ceil(total_results / limit),
-                total_results,
-            })
         }
 
-        res.json({
+        if (!page) {
+            page = 1
+        }
+
+        return res.json({
+            page,
             result: docs,
-            query_results: docs.length,
+            total_pages: Math.ceil(total_results / limit),
+            total_results,
         })
     } catch (error) {
         next(error)
