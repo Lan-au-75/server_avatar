@@ -1,17 +1,20 @@
 require('dotenv').config()
 const createError = require('http-errors')
-const express = require('express')
-const path = require('path')
 const cookieParser = require('cookie-parser')
 const logger = require('morgan')
 const cors = require('cors')
+const express = require('express')
+const path = require('path')
 
+// router
 const indexRouter = require('./routes/index')
 const usersRouter = require('./routes/users')
 const apiRouter = require('./routes/api')
 
+// config db
 const db = require('./config/db')
 
+// create app
 const app = express()
 
 // view engine setup

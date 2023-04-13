@@ -4,22 +4,148 @@
  * Module dependencies.
  */
 
-var app = require('../app')
-var debug = require('debug')('test:server')
-var http = require('http')
+const app = require('../app')
+const debug = require('debug')('test:server')
+const http = require('http')
+const { Server } = require('socket.io')
+const { instrument } = require('@socket.io/admin-ui')
+const CommentModel = require('../model/Comment')
 
 /**
  * Get port from environment and store in Express.
  */
 
-var port = normalizePort(process.env.PORT || '8080')
+const port = normalizePort(process.env.PORT || '8080')
 app.set('port', port)
 
 /**
  * Create HTTP server.
  */
 
-var server = http.createServer(app)
+const server = http.createServer(app)
+
+/**
+ *  create instance io
+ */
+
+const io = new Server(server, {
+    cors: {
+        origin: [
+            'http://localhost:5173',
+            'https://admin.socket.io',
+            'https://avatar-lan-au-75.vercel.app',
+            'https://avatar-git-main-lan-au-75.vercel.app',
+            'https://avatar-red.vercel.app',
+        ],
+        credentials: true,
+    },
+})
+
+// Hàm đệ quy để xóa các comment con của một comment cha
+const deleteChildComments = async function (commentId) {
+    // Tìm các comment con của comment cha
+    const children = await CommentModel.find({ parentId: commentId })
+
+    // Nếu có comment con, thực hiện đệ quy để xóa các comment con của chúng
+    if (children.length > 0) {
+        for (const child of children) {
+            await deleteChildComments(child._id) // Đệ quy xóa các comment con
+        }
+    }
+
+    // Xóa comment hiện tại
+    await CommentModel.findByIdAndDelete(commentId)
+}
+
+// Xóa comment cha và các comment con liên quan
+const deleteCommentAndChildComments = async function (commentId) {
+    // Gọi hàm đệ quy để xóa các comment con của comment cha
+    await deleteChildComments(commentId)
+
+    // Xóa comment cha
+    await CommentModel.findByIdAndDelete(commentId)
+}
+
+// Comment real time
+io.on('connection', (socket) => {
+    console.log('user connected')
+
+    // retrieve all comments in  database
+
+    socket.on('join-room-comment', async (room) => {
+        console.log(`User joined room ${room}`)
+        socket.join(room)
+
+        // retrieve all comments from database and send them to client
+        CommentModel.find({ room: room }).then((comments) => {
+            comments.forEach((data) => {
+                socket.emit('receive-comment', data)
+            })
+        })
+    })
+
+    socket.on('send-comment', async (data) => {
+        const comment = new CommentModel(data)
+
+        const newData = await comment.save()
+
+        io.to(newData.room).emit('receive-comment', newData)
+    })
+
+    socket.on('createReply', async (reply) => {
+        const comment = new CommentModel(reply)
+
+        const newData = await comment.save()
+
+        io.to(reply.room).emit('newReply', newData)
+    })
+
+    socket.on('update-comment', async (data) => {
+        try {
+            const updatedData = await CommentModel.findOneAndUpdate(
+                { _id: data._id },
+                { $set: { message: data.message } },
+                { new: true }
+            )
+            io.to(data.room).emit('replace-comment', updatedData)
+        } catch (error) {
+            console.log(error)
+        }
+    })
+
+    socket.on('delete-comment', async (data) => {
+        await deleteCommentAndChildComments(data._id)
+        io.to(data.room).emit('response-comment', { _id: data._id })
+    })
+
+    socket.on('like-comment', async ({ comment, like }) => {
+        const newComment = await CommentModel.findOne({ _id: comment._id })
+
+        if (like) {
+            newComment.like += 1
+        } else {
+            newComment.like -= 1
+        }
+
+        await newComment.save()
+
+        io.to(comment.room).emit('update-like-comment', { comment: newComment, like })
+    })
+
+    socket.on('leave-room-comment', (room) => {
+        console.log(`User left room ${room}`)
+        socket.leave(room)
+    })
+
+    socket.on('disconnect', () => {
+        console.log('Client disconnected')
+    })
+})
+
+instrument(io, {
+    auth: false,
+    mode: 'development',
+})
 
 /**
  * Listen on provided port, on all network interfaces.
@@ -34,7 +160,7 @@ server.on('listening', onListening)
  */
 
 function normalizePort(val) {
-    var port = parseInt(val, 10)
+    const port = parseInt(val, 10)
 
     if (isNaN(port)) {
         // named pipe
@@ -58,7 +184,7 @@ function onError(error) {
         throw error
     }
 
-    var bind = typeof port === 'string' ? 'Pipe ' + port : 'Port ' + port
+    const bind = typeof port === 'string' ? 'Pipe ' + port : 'Port ' + port
 
     // handle specific listen errors with friendly messages
     switch (error.code) {
@@ -78,7 +204,7 @@ function onError(error) {
  */
 
 function onListening() {
-    var addr = server.address()
-    var bind = typeof addr === 'string' ? 'pipe ' + addr : 'port ' + addr.port
+    const addr = server.address()
+    const bind = typeof addr === 'string' ? 'pipe ' + addr : 'port ' + addr.port
     debug('Listening on ' + bind)
 }
